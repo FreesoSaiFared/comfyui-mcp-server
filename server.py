@@ -150,9 +150,9 @@ print_startup_banner()
 # retry/backoff. Fail closed on an unavailable service. The explicit legacy
 # branch retains its historical retry and client initialization behavior.
 if SUPERFLUID_MODE == "readonly":
-    from superfluid_safe_comfy import ReadonlyComfyUIClient, _read_discovery_payload
+    from superfluid_safe_comfy import ReadonlyComfyUIClient, _read_discovery_payload, _snapshot_model_names
     startup_payload = _read_discovery_payload(COMFYUI_URL)
-    if not isinstance(startup_payload, dict) or not isinstance(startup_payload.get("CheckpointLoaderSimple"), dict):
+    if _snapshot_model_names(startup_payload) is None:
         logger.error("READONLY_DISCOVERY_UNAVAILABLE: startup observation not validated")
         raise SystemExit(1)
     comfyui_client = ReadonlyComfyUIClient.from_observed_payload(COMFYUI_URL, startup_payload)
