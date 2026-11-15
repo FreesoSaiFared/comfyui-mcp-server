@@ -41,6 +41,32 @@ def validate_loopback_comfy_url(value: str) -> str:
     return f"{parts.scheme}://{host}:{port}"
 
 
+def safe_check_comfyui_available(base_url: str) -> bool:
+    """Readonly preflight: no environment proxy, redirect, or non-loopback egress.
+
+    The server uses this BEFORE client construction. This checks only reachability,
+    not network isolation, trust in the reply, or execution authorization.
+    """
+    base_url = validate_loopback_comfy_url(base_url)
+    session = requests.Session()
+    session.trust_env = False
+    try:
+        response = session.get(
+            f"{base_url}/object_info/CheckpointLoaderSimple",
+            timeout=5,
+            allow_redirects=False,
+            headers={"Accept": "application/json"},
+        )
+        if response.status_code != 200:
+            return False
+        payload = response.json()
+        return isinstance(payload, dict) and isinstance(payload.get("CheckpointLoaderSimple"), dict)
+    except (requests.RequestException, ValueError, TypeError, AttributeError):
+        return False
+    finally:
+        session.close()
+
+
 class ReadonlyComfyUIClient(ComfyUIClient):
     """Minimal inherited name parser but no queue/prompt or cancellation authority."""
 
