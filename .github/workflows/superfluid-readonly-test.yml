@@ -1,0 +1,41 @@
+name: SUPERFLUID isolated read-only MCP source boundary
+on:
+  push:
+    branches: [integration/superfluid-readonly-admission]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Fresh isolated Python environment and exact-source test
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          python -m venv /tmp/superfluid-mcp-venv
+          source /tmp/superfluid-mcp-venv/bin/activate
+          python -m pip install --disable-pip-version-check -r requirements.txt
+          python -m pip freeze > evidence/PIP_FREEZE.txt
+          python -m py_compile server.py superfluid_readonly.py tests/test_superfluid_readonly.py
+          python -m unittest discover -s tests -p test_superfluid_readonly.py -v 2>&1 | tee evidence/TESTS.log
+          git rev-parse HEAD > evidence/SOURCE_COMMIT.txt
+          git status --porcelain=v1 > evidence/WORKTREE_STATUS.txt
+          git hash-object server.py superfluid_readonly.py tests/test_superfluid_readonly.py > evidence/SOURCE_BLOB_SHA.txt
+          sha256sum server.py superfluid_readonly.py tests/test_superfluid_readonly.py > evidence/SOURCE_SHA256SUMS.txt
+      - name: Preserve test provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: superfluid-readonly-real-fork-tests
+          path: evidence/
+          retention-days: 7
+          if-no-files-found: warn
