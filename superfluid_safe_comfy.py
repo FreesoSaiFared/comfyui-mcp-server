@@ -6,12 +6,52 @@ It cannot firewall ComfyUI's own port against other local/remote clients.
 """
 from __future__ import annotations
 
+import json
 from urllib.parse import urlsplit
 import requests
 
 
 class ReadonlyBoundaryDenied(RuntimeError):
     pass
+
+
+# The API is untrusted input even over literal loopback. Responses are decoded
+# by iter_content, so this is a cap on *decompressed* bytes too.
+MAX_DISCOVERY_BYTES = 256 * 1024
+DISCOVERY_CHUNK_BYTES = 8192
+
+
+def _read_discovery_payload(base_url: str) -> dict | None:
+    """One bounded GET; never redirects, uses proxies or executes a workflow."""
+    base_url = validate_loopback_comfy_url(base_url)
+    with requests.Session() as session:
+        session.trust_env = False
+        with session.get(
+            f"{base_url}/object_info/CheckpointLoaderSimple",
+            timeout=(3, 5),
+            allow_redirects=False,
+            stream=True,
+            headers={"Accept": "application/json", "Accept-Encoding": "identity"},
+        ) as response:
+            if response.status_code != 200:
+                return None
+            # Cheap early rejection only: Content-Length can be absent/false.
+            length = response.headers.get("Content-Length")
+            if length is not None:
+                if not length.isdecimal() or int(length) > MAX_DISCOVERY_BYTES:
+                    return None
+            body = bytearray()
+            for part in response.iter_content(chunk_size=DISCOVERY_CHUNK_BYTES):
+                if len(body) + len(part) > MAX_DISCOVERY_BYTES:
+                    return None
+                body.extend(part)
+            try:
+                payload = json.loads(body)
+            except (ValueError, UnicodeError, RecursionError, TypeError):
+                return None
+            if not isinstance(payload, dict):
+                return None
+            return payload
 
 
 def validate_loopback_comfy_url(value: str) -> str:
@@ -46,24 +86,11 @@ def safe_check_comfyui_available(base_url: str) -> bool:
     The server uses this BEFORE client construction. This checks only reachability,
     not network isolation, trust in the reply, or execution authorization.
     """
-    base_url = validate_loopback_comfy_url(base_url)
-    session = requests.Session()
-    session.trust_env = False
     try:
-        response = session.get(
-            f"{base_url}/object_info/CheckpointLoaderSimple",
-            timeout=5,
-            allow_redirects=False,
-            headers={"Accept": "application/json"},
-        )
-        if response.status_code != 200:
-            return False
-        payload = response.json()
+        payload = _read_discovery_payload(base_url)
         return isinstance(payload, dict) and isinstance(payload.get("CheckpointLoaderSimple"), dict)
-    except (requests.RequestException, ValueError, TypeError, AttributeError):
+    except requests.RequestException:
         return False
-    finally:
-        session.close()
 
 
 class ReadonlyComfyUIClient:
@@ -78,27 +105,18 @@ class ReadonlyComfyUIClient:
         self.available_models = self._get_available_models()
 
     def _get_available_models(self) -> list:
-        session = requests.Session()
-        session.trust_env = False
         try:
-            response = session.get(
-                f"{self.base_url}/object_info/CheckpointLoaderSimple",
-                timeout=5,
-                allow_redirects=False,
-                headers={"Accept": "application/json"},
-            )
-            if response.status_code != 200:
+            payload = _read_discovery_payload(self.base_url)
+            if not isinstance(payload, dict):
                 return []
-            payload = response.json()
             values = payload.get("CheckpointLoaderSimple", {}).get("input", {}).get("required", {}).get("ckpt_name")
             if not isinstance(values, list) or not values or not isinstance(values[0], list):
                 return []
-            # Never use names as proof of model identity or safe execution.
+            # The MCP inventory function still validates names and count.
+            # No model filename can authorize inference or verify its bytes.
             return values[0]
-        except (requests.RequestException, ValueError, TypeError, AttributeError):
+        except (requests.RequestException, TypeError, AttributeError):
             return []
-        finally:
-            session.close()
 
     def _queue_workflow(self, workflow):
         raise ReadonlyBoundaryDenied("SUPERFLUID_READONLY_NO_PROMPT")
