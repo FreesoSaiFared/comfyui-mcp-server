@@ -141,6 +141,89 @@ class SyntheticSnapshotTests(unittest.TestCase):
             r=self.snapshot(self.setup_proc(d),host_label='../bad')
             self.assertIn('INVALID_HOST_LABEL',r['blockers'])
 
+    def test_snapshot_schema_versioned_after_namespace_ownership_check(self):
+        with tempfile.TemporaryDirectory() as d:
+            r=self.snapshot(self.setup_proc(d))
+            self.assertEqual(r['schema'],'superfluid.host-proc-snapshot.v2')
+            self.assertFalse(r['execution_authorized'])
+
+    def test_namespace_second_socket_same_port_caught(self):
+        # A second inode on exactly the same loopback address/port can be
+        # created by another SO_REUSEPORT listener, bypassing nominated PIDs.
+        with tempfile.TemporaryDirectory() as d:
+            root=self.setup_proc(d)
+            with (root/'101'/'net'/'tcp').open('a') as f:
+                f.write(tcp_line('0100007F',8188,999))
+            r=self.snapshot(root)
+            self.assert_denied(r)
+            self.assertIn('COMFYUI_NAMESPACE_OTHER_FD_LISTENER_ON_EXPECTED_PORT',r['blockers'])
+            self.assertEqual(r['observed_processes']['comfyui']['namespace_extra_listener_count_on_expected_port'],1)
+            self.assertEqual(r['observed_processes']['comfyui']['namespace_extra_listener_endpoints_on_expected_port'],
+                             [{'bind_ip':'127.0.0.1','port':8188}])
+
+    def test_namespace_unowned_wildcard_same_port_caught(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=self.setup_proc(d)
+            with (root/'101'/'net'/'tcp').open('a') as f:
+                f.write(tcp_line('00000000',8188,999))
+            r=self.snapshot(root)
+            self.assertIn('COMFYUI_NAMESPACE_OTHER_FD_LISTENER_ON_EXPECTED_PORT',r['blockers'])
+            self.assertEqual(r['observed_processes']['comfyui']['namespace_extra_listener_endpoints_on_expected_port'],
+                             [{'bind_ip':'0.0.0.0','port':8188}])
+
+    def test_namespace_unowned_ipv6_expected_port_caught(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=self.setup_proc(d)
+            with (root/'101'/'net'/'tcp6').open('a') as f:
+                f.write(tcp_line('00000000000000000000000001000000',8188,999))
+            r=self.snapshot(root)
+            self.assertIn('COMFYUI_NAMESPACE_OTHER_FD_LISTENER_ON_EXPECTED_PORT',r['blockers'])
+            self.assertEqual(r['observed_processes']['comfyui']['namespace_extra_listener_endpoints_on_expected_port'],
+                             [{'bind_ip':'::1','port':8188}])
+
+    def test_mcp_namespace_unowned_same_port_caught(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=self.setup_proc(d)
+            with (root/'102'/'net'/'tcp').open('a') as f:
+                f.write(tcp_line('0100007F',9000,999))
+            r=self.snapshot(root)
+            self.assertIn('MCP_NAMESPACE_OTHER_FD_LISTENER_ON_EXPECTED_PORT',r['blockers'])
+
+    def test_unrelated_namespace_port_is_not_exposed(self):
+        # Deliberately scoped to the selected expected port, not a full
+        # network-namespace discovery tool.
+        with tempfile.TemporaryDirectory() as d:
+            root=self.setup_proc(d)
+            with (root/'101'/'net'/'tcp').open('a') as f:
+                f.write(tcp_line('0100007F',4242,999))
+            r=self.snapshot(root)
+            self.assert_denied(r)
+            self.assertEqual(r['assessment'],'UNVERIFIED')
+            self.assertEqual(r['observed_processes']['comfyui']['namespace_extra_listener_count_on_expected_port'],0)
+            self.assertNotIn('4242',json.dumps(r))
+
+    def test_extra_socket_owned_by_named_process_not_called_other(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=self.setup_proc(d)
+            (root/'101'/'fd'/'4').symlink_to('socket:[999]')
+            with (root/'101'/'net'/'tcp').open('a') as f:
+                f.write(tcp_line('0100007F',8188,999))
+            r=self.snapshot(root)
+            self.assert_denied(r)
+            self.assertEqual(r['observed_processes']['comfyui']['namespace_extra_listener_count_on_expected_port'],0)
+            self.assertIn('SHARED_INODE_ACCESS_BY_OTHER_PROCESSES_NOT_EXCLUDED',r['unverified'])
+
+    def test_multiple_other_inodes_same_endpoint_count_preserved(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=self.setup_proc(d)
+            with (root/'101'/'net'/'tcp').open('a') as f:
+                f.write(tcp_line('0100007F',8188,999))
+                f.write(tcp_line('0100007F',8188,1000))
+            r=self.snapshot(root)
+            self.assertEqual(r['observed_processes']['comfyui']['namespace_extra_listener_count_on_expected_port'],2)
+            self.assertEqual(len(r['observed_processes']['comfyui']['namespace_extra_listener_endpoints_on_expected_port']),1)
+            self.assertIn('COMFYUI_NAMESPACE_OTHER_FD_LISTENER_ON_EXPECTED_PORT',r['blockers'])
+
     def test_ipv6_loopback_parsing(self):
         sample=HEADER + tcp_line('00000000000000000000000001000000',port=9000)
         x=parse_tcp_listeners(sample,ipv6=True)
