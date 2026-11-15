@@ -1,4 +1,4 @@
-# SUPERFLUID M100 â file-descriptor-bound read-only workflow catalog
+# SUPERFLUID M100 — file-descriptor-bound read-only workflow catalog
 
 **2026-11-15. Review branch only. Draft PR unmerged. Production NO-GO. Host evidence absent.**
 
