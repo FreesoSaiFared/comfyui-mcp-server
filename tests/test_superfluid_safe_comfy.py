@@ -12,7 +12,8 @@ from http.server import BaseHTTPRequestHandler
 from unittest.mock import patch
 
 from superfluid_safe_comfy import (
-    ReadonlyComfyUIClient, ReadonlyBoundaryDenied, validate_loopback_comfy_url
+    ReadonlyComfyUIClient, ReadonlyBoundaryDenied, validate_loopback_comfy_url,
+    safe_check_comfyui_available
 )
 
 
@@ -85,6 +86,42 @@ class Stub(BaseHTTPRequestHandler):
 
 
 class HttpTests(unittest.TestCase):
+    def test_preflight_ignores_environment_proxy(self):
+        class Reuse(socketserver.ThreadingTCPServer): allow_reuse_address=True
+        Stub.get_paths.clear()
+        Stub.post_paths.clear()
+        with Reuse(("127.0.0.1",0),Stub) as http:
+            thread=threading.Thread(target=http.serve_forever,daemon=True)
+            thread.start()
+            try:
+                with patch.dict(os.environ,{"HTTP_PROXY":"http://127.0.0.1:1","HTTPS_PROXY":"http://127.0.0.1:1","NO_PROXY":""}):
+                    self.assertTrue(safe_check_comfyui_available(f"http://127.0.0.1:{http.server_address[1]}"))
+                self.assertEqual(Stub.get_paths,["/object_info/CheckpointLoaderSimple"])
+                self.assertEqual(Stub.post_paths,[])
+            finally:
+                http.shutdown();thread.join(timeout=4)
+
+    def test_preflight_rejects_redirect_and_external_target(self):
+        class Redirect(BaseHTTPRequestHandler):
+            requests=[]
+            def do_GET(self):
+                type(self).requests.append(self.path)
+                self.send_response(302)
+                self.send_header("Location","https://example.com/exfil")
+                self.end_headers()
+            def log_message(self,*args): pass
+        class Reuse(socketserver.ThreadingTCPServer): allow_reuse_address=True
+        with self.assertRaises(ReadonlyBoundaryDenied):
+            safe_check_comfyui_available("https://example.com:8188")
+        with Reuse(("127.0.0.1",0),Redirect) as http:
+            thread=threading.Thread(target=http.serve_forever,daemon=True)
+            thread.start()
+            try:
+                self.assertFalse(safe_check_comfyui_available(f"http://127.0.0.1:{http.server_address[1]}"))
+                self.assertEqual(Redirect.requests,["/object_info/CheckpointLoaderSimple"])
+            finally:
+                http.shutdown();thread.join(timeout=4)
+
     def test_live_loopback_get_only_and_no_proxy(self):
         class Reuse(socketserver.ThreadingTCPServer):allow_reuse_address=True
         Stub.get_paths.clear()
