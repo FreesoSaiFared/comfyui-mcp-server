@@ -74,20 +74,30 @@ class ReadonlyWorkflowCatalog:
 
     def get_workflow_catalog(self) -> list[dict] | None:
         root = self.workflows_dir
+        # Resolve the final path component exactly once. Pin the resulting
+        # directory inode before listing names: path prechecks followed by
+        # scandir(path) can follow a substituted symlink (TOCTOU).
+        # This is Linux-specific and fails closed on platforms without flags.
+        if not all(hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW")):
+            return None
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
         try:
-            if root.is_symlink():
-                return None
-            if not root.exists():
-                return []
+            directory_fd = os.open(root, flags)
+        except FileNotFoundError:
+            return []
+        except OSError:
+            return None
+        try:
             names: list[dict] = []
-            with os.scandir(root) as entries:
+            # scandir(fd) enumerates the opened directory, even if its name
+            # is later renamed or replaced by a symlink. Never read file body.
+            with os.scandir(directory_fd) as entries:
                 for i, entry in enumerate(entries):
                     if i >= self.MAX_DIR_ENTRIES:
                         return None
                     name = entry.name
                     if not name.endswith(".json") or name.endswith(".meta.json"):
                         continue
-                    # Reject rather than follow a symlink or unexpected file.
                     if not entry.is_file(follow_symlinks=False):
                         return None
                     ident = name[:-5]
@@ -99,6 +109,8 @@ class ReadonlyWorkflowCatalog:
             return names
         except OSError:
             return None
+        finally:
+            os.close(directory_fd)
 
 def register_superfluid_readonly_tools(mcp, comfyui_client, workflow_manager):
     """Register an explicit allowlist, not an effectful MCP tool manager."""
