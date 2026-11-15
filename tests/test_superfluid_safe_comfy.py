@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from pathlib import Path
 import threading
 import unittest
 import socketserver
@@ -49,7 +50,7 @@ class BoundaryTests(unittest.TestCase):
         env.update({"SUPERFLUID_MODE":"legacy","COMFYUI_URL":"http://127.0.0.1:1"})
         env.pop("SUPERFLUID_UNSAFE_LEGACY_ACK",None)
         p=subprocess.run([sys.executable,"-c","import server"],env=env,
-                         capture_output=True,text=True,timeout=15)
+                         capture_output=True,text=True,timeout=15, cwd=Path(__file__).resolve().parent.parent)
         self.assertNotEqual(p.returncode,0)
         self.assertIn("LEGACY_EFFECTS_REQUIRE_EXPLICIT_RISK_ACK",p.stdout+p.stderr)
 
@@ -58,7 +59,7 @@ class BoundaryTests(unittest.TestCase):
         env.pop("SUPERFLUID_MODE",None)
         env["COMFYUI_URL"]="http://example.com:8188"
         p=subprocess.run([sys.executable,"-c","import server"],env=env,
-                         capture_output=True,text=True,timeout=15)
+                         capture_output=True,text=True,timeout=15, cwd=Path(__file__).resolve().parent.parent)
         self.assertNotEqual(p.returncode,0)
         self.assertIn("UNSAFE_COMFYUI_URL",p.stdout+p.stderr)
 
