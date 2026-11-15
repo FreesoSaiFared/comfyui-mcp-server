@@ -19,7 +19,7 @@ _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 
 
 def _safe_model_name(value: Any) -> bool:
-    if not isinstance(value, str) or len(value) > 400 or not value:
+    if type(value) is not str or len(value) > 400 or not value:
         return False
     if value.startswith(("/", ".")) or "\\" in value or "%" in value or any(ord(c)<32 for c in value):
         return False
@@ -28,7 +28,7 @@ def _safe_model_name(value: Any) -> bool:
 
 
 def model_inventory(available: Any) -> dict:
-    if not isinstance(available, list) or len(available) > MAX_MODELS or not all(_safe_model_name(m) for m in available):
+    if type(available) is not list or len(available) > MAX_MODELS or not all(_safe_model_name(m) for m in available):
         return {"status": "DENY", "error": "UNTRUSTED_MODEL_INVENTORY", "models": [], "count": 0,
                 "verified_artifact_count": 0, "execution_authorized": False}
     if len(set(available)) != len(available):
@@ -40,16 +40,18 @@ def model_inventory(available: Any) -> dict:
 
 
 def workflow_inventory(raw: Any) -> dict:
-    if not isinstance(raw, list) or len(raw) > MAX_WORKFLOWS:
+    if type(raw) is not list or len(raw) > MAX_WORKFLOWS:
         return {"status": "DENY", "error": "UNTRUSTED_WORKFLOW_CATALOG", "workflows": [], "count": 0,
                 "execution_authorized": False}
     clean = []
     for item in raw:
-        if not isinstance(item, dict) or not _SAFE_ID.fullmatch(str(item.get("id", ""))):
+        # Reject non-JSON builtins *before* coercion, user-defined __str__,
+        # comparison and accessors. A numeric ID must never survive as an int.
+        if type(item) is not dict or type(item.get("id")) is not str or not _SAFE_ID.fullmatch(item["id"]):
             return {"status": "DENY", "error": "UNTRUSTED_WORKFLOW_CATALOG", "workflows": [], "count": 0,
                     "execution_authorized": False}
         name = item.get("name")
-        if not isinstance(name, str) or not (1 <= len(name) <= 160) or any(ord(c) < 32 for c in name):
+        if type(name) is not str or not (1 <= len(name) <= 160) or any(ord(c) < 32 for c in name):
             return {"status": "DENY", "error": "UNTRUSTED_WORKFLOW_CATALOG", "workflows": [], "count": 0,
                     "execution_authorized": False}
         clean.append({"id": item["id"], "name": name})
