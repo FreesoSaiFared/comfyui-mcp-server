@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import zlib
 from urllib.parse import urlsplit
 
@@ -36,6 +37,14 @@ def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict:
             raise ValueError("DUPLICATE_DISCOVERY_JSON_KEY")
         obj[key] = value
     return obj
+
+
+def _reject_nonfinite_json_float(value: str) -> float:
+    """Reject valid-number exponents that overflow the Python float domain."""
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError("NONFINITE_DISCOVERY_JSON_FLOAT")
+    return parsed
 
 
 def _reject_json_constant(value: str):
@@ -93,6 +102,7 @@ async def _get_discovery_payload_async(base_url: str) -> dict | None:
                     body,
                     object_pairs_hook=_reject_duplicate_json_keys,
                     parse_constant=_reject_json_constant,
+                    parse_float=_reject_nonfinite_json_float,
                 )
             except (ValueError, UnicodeError, RecursionError, TypeError):
                 return None
