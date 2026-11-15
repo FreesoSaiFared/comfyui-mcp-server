@@ -74,18 +74,35 @@ class ReadonlyWorkflowCatalog:
 
     def get_workflow_catalog(self) -> list[dict] | None:
         root = self.workflows_dir
-        # Resolve the final path component exactly once. Pin the resulting
-        # directory inode before listing names: path prechecks followed by
-        # scandir(path) can follow a substituted symlink (TOCTOU).
-        # This is Linux-specific and fails closed on platforms without flags.
-        if not all(hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW")):
+        # M101: pin *every* ancestor using openat-style dir_fd traversal.
+        # A final-only O_NOFOLLOW allows a symlink in an ancestor to redirect
+        # the catalog to an unrelated tree. All components are opened relative
+        # to a previously pinned directory inode with O_NOFOLLOW.
+        # Linux/POSIX-only; unsupported platforms fail closed.
+        if not all(hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC")):
             return None
-        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        if os.open not in getattr(os, "supports_dir_fd", ()):
+            return None
+        components = root.parts[1:] if root.is_absolute() else root.parts
+        if len(components) > 64 or any(component == ".." for component in components):
+            return None
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
         try:
-            directory_fd = os.open(root, flags)
-        except FileNotFoundError:
-            return []
+            directory_fd = os.open(os.path.sep if root.is_absolute() else ".", flags)
         except OSError:
+            return None
+        try:
+            for component in components:
+                next_fd = os.open(component, flags, dir_fd=directory_fd)
+                os.close(directory_fd)
+                directory_fd = next_fd
+        except FileNotFoundError:
+            os.close(directory_fd)
+            return []
+        except BaseException as exc:
+            os.close(directory_fd)
+            if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                raise
             return None
         try:
             names: list[dict] = []
