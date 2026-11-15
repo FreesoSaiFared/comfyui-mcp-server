@@ -83,6 +83,32 @@ class DiscoveryBoundsTests(unittest.TestCase):
             self.assertEqual(state["posts"], [])
             self.assertEqual(state["gets"], ["/object_info/CheckpointLoaderSimple"] * 2)
 
+    def test_malformed_checkpoint_shapes_are_unavailable_not_empty(self):
+        samples = [
+            {"CheckpointLoaderSimple": {}},
+            {"CheckpointLoaderSimple": {"input": "wrong"}},
+            {"CheckpointLoaderSimple": {"input": {"required": {}}}},
+            {"CheckpointLoaderSimple": {"input": {"required": {"ckpt_name": []}}}},
+            {"CheckpointLoaderSimple": {"input": {"required": {"ckpt_name": [["ok", 9]]}}}},
+        ]
+        for sample in samples:
+            with self.subTest(sample=sample):
+                self.assert_rejected(json.dumps(sample).encode())
+
+    def test_valid_empty_choice_list_remains_observed(self):
+        from superfluid_readonly import model_inventory
+        payload = json.dumps({"CheckpointLoaderSimple": {
+            "input": {"required": {"ckpt_name": [[]]}}
+        }}).encode()
+        with stub_server(payload) as (url, state):
+            self.assertTrue(safe_check_comfyui_available(url))
+            client = ReadonlyComfyUIClient(url)
+            self.assertEqual(client.available_models, [])
+            observation = model_inventory(client.available_models)
+            self.assertEqual(observation["status"], "OBSERVED_ONLY")
+            self.assertFalse(observation["execution_authorized"])
+            self.assertEqual(state["posts"], [])
+
     def test_clean_valid_small_response_preserves_discovery(self):
         with stub_server(make_payload()) as (url, state):
             self.assertTrue(safe_check_comfyui_available(url))
