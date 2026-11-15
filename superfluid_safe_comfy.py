@@ -7,6 +7,8 @@ It cannot firewall ComfyUI's own port against other local/remote clients.
 from __future__ import annotations
 
 import json
+import time
+import zlib
 from urllib.parse import urlsplit
 import requests
 
@@ -18,41 +20,75 @@ class ReadonlyBoundaryDenied(RuntimeError):
 # The API is untrusted input even over literal loopback. Responses are decoded
 # by iter_content, so this is a cap on *decompressed* bytes too.
 MAX_DISCOVERY_BYTES = 256 * 1024
-DISCOVERY_CHUNK_BYTES = 8192
+# A one-byte raw stream lets each received byte trigger a deadline check.
+# A per-recv timeout alone is not a total time limit against continuous trickles.
+DISCOVERY_RAW_READ_BYTES = 1
+DISCOVERY_IDLE_SECONDS = 0.75
+MAX_DISCOVERY_BODY_SECONDS = 4.0
 
 
 def _read_discovery_payload(base_url: str) -> dict | None:
-    """One bounded GET; never redirects, uses proxies or executes a workflow."""
+    """Bounded GET body; never follows redirects, proxies or executes workflows.
+
+    Starts the elapsed-time budget before the HTTP request, but cannot enforce
+    that budget while requests/http.client is still parsing slow-drip headers.
+    Once response headers arrive, every RAW byte is deadline-checked. This is
+    a bounded body-read protocol, not an OS-level complete transaction timeout.
+    """
     base_url = validate_loopback_comfy_url(base_url)
+    deadline = time.monotonic() + MAX_DISCOVERY_BODY_SECONDS
     with requests.Session() as session:
         session.trust_env = False
         with session.get(
             f"{base_url}/object_info/CheckpointLoaderSimple",
-            timeout=(3, 5),
+            timeout=(2, DISCOVERY_IDLE_SECONDS),
             allow_redirects=False,
             stream=True,
             headers={"Accept": "application/json", "Accept-Encoding": "identity"},
         ) as response:
-            if response.status_code != 200:
+            if time.monotonic() >= deadline or response.status_code != 200:
                 return None
-            # Cheap early rejection only: Content-Length can be absent/false.
             length = response.headers.get("Content-Length")
             if length is not None:
                 if len(length) > 12 or not length.isascii() or not length.isdecimal() or int(length) > MAX_DISCOVERY_BYTES:
                     return None
+            encoding = response.headers.get("Content-Encoding", "identity").strip().lower()
+            if encoding not in {"identity", "gzip"}:
+                return None
+            decoder = zlib.decompressobj(16 + zlib.MAX_WBITS) if encoding == "gzip" else None
             body = bytearray()
-            for part in response.iter_content(chunk_size=DISCOVERY_CHUNK_BYTES):
+            wire_bytes = 0
+            # Iterating on undecoded individual wire bytes prevents a gzip
+            # header/optional metadata stream from hiding endless slow trickles
+            # behind a decoder that has yet to emit a decoded fragment.
+            for raw in response.raw.stream(amt=DISCOVERY_RAW_READ_BYTES, decode_content=False):
+                if time.monotonic() >= deadline:
+                    return None
+                wire_bytes += len(raw)
+                if wire_bytes > MAX_DISCOVERY_BYTES:
+                    return None
+                if decoder is None:
+                    part = raw
+                else:
+                    try:
+                        part = decoder.decompress(raw, MAX_DISCOVERY_BYTES + 1 - len(body))
+                    except zlib.error:
+                        return None
+                    if decoder.unused_data or decoder.unconsumed_tail:
+                        return None
                 if len(body) + len(part) > MAX_DISCOVERY_BYTES:
                     return None
                 body.extend(part)
+            if time.monotonic() >= deadline:
+                return None
+            # Reject truncated gzip streams and appended extra gzip members.
+            if decoder is not None and (not decoder.eof or decoder.unused_data):
+                return None
             try:
                 payload = json.loads(body)
             except (ValueError, UnicodeError, RecursionError, TypeError):
                 return None
-            if not isinstance(payload, dict):
-                return None
-            return payload
-
+            return payload if isinstance(payload, dict) else None
 
 def validate_loopback_comfy_url(value: str) -> str:
     if not isinstance(value, str) or not value or any(ord(c) < 33 or ord(c) == 127 for c in value):
