@@ -138,8 +138,8 @@ if not check_comfyui_available(COMFYUI_URL):
 # Global ComfyUI client (fallback since context isn't available)
 comfyui_client = ComfyUIClient(COMFYUI_URL)
 workflow_manager = WorkflowManager(WORKFLOW_DIR)
-defaults_manager = DefaultsManager(comfyui_client)
-asset_registry = AssetRegistry(ttl_hours=ASSET_TTL_HOURS, comfyui_base_url=COMFYUI_URL)
+defaults_manager = None if SUPERFLUID_MODE == "readonly" else DefaultsManager(comfyui_client)
+asset_registry = None if SUPERFLUID_MODE == "readonly" else AssetRegistry(ttl_hours=ASSET_TTL_HOURS, comfyui_base_url=COMFYUI_URL)
 
 # Publishing setup is intentionally absent in read-only mode.
 publish_manager = None
