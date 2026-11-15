@@ -6,51 +6,45 @@ It cannot firewall ComfyUI's own port against other local/remote clients.
 """
 from __future__ import annotations
 
+import asyncio
 import json
-import time
 import zlib
 from urllib.parse import urlsplit
-import requests
+
+import httpx
 
 
 class ReadonlyBoundaryDenied(RuntimeError):
     pass
 
 
-# The API is untrusted input even over literal loopback. Responses are decoded
-# by iter_content, so this is a cap on *decompressed* bytes too.
+# A size cap and an absolute cooperative deadline are independent budgets.
+# The async request phase is enclosed in wait_for, including HTTP header reads.
+# The existing BODY_SECONDS constant is retained for backward compatibility
+# with earlier tests and operators, but now covers the WHOLE transaction.
 MAX_DISCOVERY_BYTES = 256 * 1024
-# A one-byte raw stream lets each received byte trigger a deadline check.
-# A per-recv timeout alone is not a total time limit against continuous trickles.
-DISCOVERY_RAW_READ_BYTES = 1
-DISCOVERY_IDLE_SECONDS = 0.75
+DISCOVERY_CHUNK_BYTES = 8192
 MAX_DISCOVERY_BODY_SECONDS = 4.0
+DISCOVERY_IDLE_SECONDS = 0.75
 
 
-def _read_discovery_payload(base_url: str) -> dict | None:
-    """Bounded GET body; never follows redirects, proxies or executes workflows.
-
-    Starts the elapsed-time budget before the HTTP request, but cannot enforce
-    that budget while requests/http.client is still parsing slow-drip headers.
-    Once response headers arrive, every RAW byte is deadline-checked. This is
-    a bounded body-read protocol, not an OS-level complete transaction timeout.
-    """
-    base_url = validate_loopback_comfy_url(base_url)
-    deadline = time.monotonic() + MAX_DISCOVERY_BODY_SECONDS
-    with requests.Session() as session:
-        session.trust_env = False
-        with session.get(
-            f"{base_url}/object_info/CheckpointLoaderSimple",
-            timeout=(2, DISCOVERY_IDLE_SECONDS),
-            allow_redirects=False,
-            stream=True,
+async def _get_discovery_payload_async(base_url: str) -> dict | None:
+    """GET only from literal loopback; bounded on wire and decompressed body."""
+    timeout = httpx.Timeout(connect=2.0, read=DISCOVERY_IDLE_SECONDS,
+                            write=DISCOVERY_IDLE_SECONDS, pool=DISCOVERY_IDLE_SECONDS)
+    async with httpx.AsyncClient(trust_env=False, follow_redirects=False,
+                                 timeout=timeout, http2=False) as client:
+        async with client.stream(
+            "GET", f"{base_url}/object_info/CheckpointLoaderSimple",
             headers={"Accept": "application/json", "Accept-Encoding": "identity"},
         ) as response:
-            if time.monotonic() >= deadline or response.status_code != 200:
+            if response.status_code != 200:
                 return None
+            # Header length cannot be trusted; always check received bytes too.
             length = response.headers.get("Content-Length")
             if length is not None:
-                if len(length) > 12 or not length.isascii() or not length.isdecimal() or int(length) > MAX_DISCOVERY_BYTES:
+                if (len(length) > 12 or not length.isascii() or
+                        not length.isdecimal() or int(length) > MAX_DISCOVERY_BYTES):
                     return None
             encoding = response.headers.get("Content-Encoding", "identity").strip().lower()
             if encoding not in {"identity", "gzip"}:
@@ -58,20 +52,17 @@ def _read_discovery_payload(base_url: str) -> dict | None:
             decoder = zlib.decompressobj(16 + zlib.MAX_WBITS) if encoding == "gzip" else None
             body = bytearray()
             wire_bytes = 0
-            # Iterating on undecoded individual wire bytes prevents a gzip
-            # header/optional metadata stream from hiding endless slow trickles
-            # behind a decoder that has yet to emit a decoded fragment.
-            for raw in response.raw.stream(amt=DISCOVERY_RAW_READ_BYTES, decode_content=False):
-                if time.monotonic() >= deadline:
-                    return None
-                wire_bytes += len(raw)
+            # Raw iterator bypasses transparent compression and handles gzip
+            # including optional headers before any decoded JSON is emitted.
+            async for chunk in response.aiter_raw(chunk_size=DISCOVERY_CHUNK_BYTES):
+                wire_bytes += len(chunk)
                 if wire_bytes > MAX_DISCOVERY_BYTES:
                     return None
                 if decoder is None:
-                    part = raw
+                    part = chunk
                 else:
                     try:
-                        part = decoder.decompress(raw, MAX_DISCOVERY_BYTES + 1 - len(body))
+                        part = decoder.decompress(chunk, MAX_DISCOVERY_BYTES + 1 - len(body))
                     except zlib.error:
                         return None
                     if decoder.unused_data or decoder.unconsumed_tail:
@@ -79,16 +70,39 @@ def _read_discovery_payload(base_url: str) -> dict | None:
                 if len(body) + len(part) > MAX_DISCOVERY_BYTES:
                     return None
                 body.extend(part)
-            if time.monotonic() >= deadline:
-                return None
-            # Reject truncated gzip streams and appended extra gzip members.
-            if decoder is not None and (not decoder.eof or decoder.unused_data):
+            if decoder is not None and not decoder.eof:
                 return None
             try:
-                payload = json.loads(body)
+                result = json.loads(body)
             except (ValueError, UnicodeError, RecursionError, TypeError):
                 return None
-            return payload if isinstance(payload, dict) else None
+            return result if isinstance(result, dict) else None
+
+
+def _read_discovery_payload(base_url: str) -> dict | None:
+    """Synchronous startup-only bridge with a full async HTTP transaction cap.
+
+    When called from a running event loop, fail closed instead of trying to
+    nest asyncio.run or silently launch an uncontrolled worker thread. This
+    class is initialized synchronously during server startup only.
+
+    Cancellation is cooperative: the 4s limit covers async header and body
+    I/O, but not arbitrary host scheduler stalls or malicious native code.
+    """
+    base_url = validate_loopback_comfy_url(base_url)
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        return None
+    try:
+        return asyncio.run(asyncio.wait_for(
+            _get_discovery_payload_async(base_url), timeout=MAX_DISCOVERY_BODY_SECONDS
+        ))
+    except (httpx.HTTPError, TimeoutError, OSError, RuntimeError):
+        return None
+
 
 def validate_loopback_comfy_url(value: str) -> str:
     if not isinstance(value, str) or not value or any(ord(c) < 33 or ord(c) == 127 for c in value):
@@ -122,11 +136,8 @@ def safe_check_comfyui_available(base_url: str) -> bool:
     The server uses this BEFORE client construction. This checks only reachability,
     not network isolation, trust in the reply, or execution authorization.
     """
-    try:
-        payload = _read_discovery_payload(base_url)
-        return isinstance(payload, dict) and isinstance(payload.get("CheckpointLoaderSimple"), dict)
-    except requests.RequestException:
-        return False
+    payload = _read_discovery_payload(base_url)
+    return isinstance(payload, dict) and isinstance(payload.get("CheckpointLoaderSimple"), dict)
 
 
 class ReadonlyComfyUIClient:
@@ -151,7 +162,7 @@ class ReadonlyComfyUIClient:
             # The MCP inventory function still validates names and count.
             # No model filename can authorize inference or verify its bytes.
             return values[0]
-        except (requests.RequestException, TypeError, AttributeError):
+        except (TypeError, AttributeError):
             return []
 
     def _queue_workflow(self, workflow):
