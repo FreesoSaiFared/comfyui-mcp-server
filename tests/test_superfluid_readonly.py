@@ -102,6 +102,10 @@ class ActualUpstreamRegistration(unittest.TestCase):
                 names={t.name for t in server.mcp._tool_manager.list_tools()}
                 self.assertEqual(names, {"list_models","list_workflows","superfluid_worker_admission"})
                 self.assertIsNone(server.publish_manager)
+                from superfluid_readonly import ReadonlyWorkflowCatalog
+                from managers.workflow_manager import WorkflowManager
+                self.assertIsInstance(server.workflow_manager, ReadonlyWorkflowCatalog)
+                self.assertNotIsInstance(server.workflow_manager, WorkflowManager)
                 self.assertEqual(StubComfy.post_count,0)
                 self.assertIn("/object_info/CheckpointLoaderSimple",StubComfy.get_paths)
             finally:
