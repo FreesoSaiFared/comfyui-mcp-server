@@ -28,6 +28,22 @@ MAX_DISCOVERY_BODY_SECONDS = 4.0
 DISCOVERY_IDLE_SECONDS = 0.75
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict:
+    """Reject ambiguous JSON at every nesting depth; do not expose key values."""
+    obj = {}
+    for key, value in pairs:
+        if key in obj:
+            raise ValueError("DUPLICATE_DISCOVERY_JSON_KEY")
+        obj[key] = value
+    return obj
+
+
+def _reject_json_constant(value: str):
+    """Python json accepts NaN/Infinity by default, which JSON does not."""
+    raise ValueError("NONSTANDARD_DISCOVERY_JSON_CONSTANT")
+
+
+
 async def _get_discovery_payload_async(base_url: str) -> dict | None:
     """GET only from literal loopback; bounded on wire and decompressed body."""
     timeout = httpx.Timeout(connect=2.0, read=DISCOVERY_IDLE_SECONDS,
@@ -73,7 +89,11 @@ async def _get_discovery_payload_async(base_url: str) -> dict | None:
             if decoder is not None and not decoder.eof:
                 return None
             try:
-                result = json.loads(body)
+                result = json.loads(
+                    body,
+                    object_pairs_hook=_reject_duplicate_json_keys,
+                    parse_constant=_reject_json_constant,
+                )
             except (ValueError, UnicodeError, RecursionError, TypeError):
                 return None
             return result if isinstance(result, dict) else None
