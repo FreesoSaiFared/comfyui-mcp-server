@@ -69,11 +69,22 @@ class CatalogDirfdTests(TestCase):
             with self.assertRaises(OSError):
                 os.fstat(observed[0])
 
-    def test_missing_path_still_empty_unverified_inventory(self):
+    def test_missing_path_is_denied_not_observed_empty(self):
         with TemporaryDirectory() as d:
             result=readonly.ReadonlyWorkflowCatalog(Path(d)/'missing').get_workflow_catalog()
+            self.assertIsNone(result)
+            response=readonly.workflow_inventory(result)
+            self.assertEqual(response['status'],'DENY')
+            self.assertFalse(response['execution_authorized'])
+
+    def test_existing_empty_directory_is_not_denied(self):
+        with TemporaryDirectory() as d:
+            result=readonly.ReadonlyWorkflowCatalog(Path(d)).get_workflow_catalog()
             self.assertEqual(result,[])
-            self.assertFalse(readonly.workflow_inventory(result)['execution_authorized'])
+            response=readonly.workflow_inventory(result)
+            self.assertEqual(response['status'],'OBSERVED_ONLY')
+            self.assertEqual(response['count'],0)
+            self.assertFalse(response['execution_authorized'])
 
     def test_non_directory_regular_file_denied(self):
         with TemporaryDirectory() as d:
