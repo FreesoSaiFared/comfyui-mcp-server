@@ -82,7 +82,7 @@ class DeadlineTests(unittest.TestCase):
         with trickle_stub(inventory()) as (url, state):
             with patch.object(guard, "MAX_DISCOVERY_BODY_SECONDS", 0.1):
                 client = ReadonlyComfyUIClient(url)
-            self.assertEqual(client.available_models, [])
+            self.assertIsNone(client.available_models)
             self.assertEqual(state["posts"], [])
 
     def test_gzip_optional_filename_header_cannot_hide_trickle(self):
@@ -107,20 +107,20 @@ class DeadlineTests(unittest.TestCase):
     def test_unknown_content_encoding_denied_before_decode(self):
         with trickle_stub(inventory(), interval=0.0, encoding="br") as (url, state):
             self.assertFalse(safe_check_comfyui_available(url))
-            self.assertEqual(ReadonlyComfyUIClient(url).available_models, [])
+            self.assertIsNone(ReadonlyComfyUIClient(url).available_models)
             self.assertEqual(state["posts"], [])
 
     def test_truncated_gzip_does_not_parse_partial_json(self):
         raw = gzip.compress(inventory())[:-6]
         with trickle_stub(raw, interval=0.0, encoding="gzip") as (url, _):
             self.assertFalse(safe_check_comfyui_available(url))
-            self.assertEqual(ReadonlyComfyUIClient(url).available_models, [])
+            self.assertIsNone(ReadonlyComfyUIClient(url).available_models)
 
     def test_concatenated_gzip_member_denied(self):
         raw = gzip.compress(inventory()) + gzip.compress(inventory())
         with trickle_stub(raw, interval=0.0, encoding="gzip") as (url, _):
             self.assertFalse(safe_check_comfyui_available(url))
-            self.assertEqual(ReadonlyComfyUIClient(url).available_models, [])
+            self.assertIsNone(ReadonlyComfyUIClient(url).available_models)
 
     def test_deadline_must_not_send_workflow_even_with_proxy_env(self):
         with trickle_stub(inventory()) as (url, state):
