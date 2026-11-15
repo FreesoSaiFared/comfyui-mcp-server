@@ -1,6 +1,8 @@
 # Core dependencies
 requests>=2.31.0
-mcp>=0.9.0
+# The current server uses the MCP Python SDK v1 FastMCP API.
+# v2 removes mcp.server.fastmcp; pin the audited v1 compatibility target.
+mcp==1.30.0
 
 # Image processing (required for view_image tool)
 Pillow>=10.0.0
