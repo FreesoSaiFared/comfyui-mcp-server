@@ -89,7 +89,7 @@ class OneShotBackend(BaseHTTPRequestHandler):
         type(self).requests.append(self.path)
         first = len(type(self).requests) == 1
         data = self.first_payload if first else self.second_payload
-        body = json.dumps(data).encode()
+        body = data if type(data) is bytes else json.dumps(data).encode()
         self.send_response(self.first_status if first else 200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
@@ -181,6 +181,15 @@ class OneShotStartup(unittest.TestCase):
                     for x in proc.stdout.splitlines() if "M099_STARTUP_RECEIPT:" in x]
         self.assertEqual(len(receipts), 1)
         self.assertEqual(receipts[0]["models"], [])
+        self.assertEqual(gets, ["/object_info/CheckpointLoaderSimple"])
+        self.assertEqual(posts, 0)
+
+    def test_duplicate_key_first_response_exits_without_retry(self):
+        raw = (b'{"CheckpointLoaderSimple":{"input":{"required":'
+               b'{"ckpt_name":[[]],"ckpt_name":[["forged.safetensors"]]}}}}')
+        proc, gets, posts = self.run_child(first_payload=raw)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("READONLY_DISCOVERY_UNAVAILABLE", proc.stderr + proc.stdout)
         self.assertEqual(gets, ["/object_info/CheckpointLoaderSimple"])
         self.assertEqual(posts, 0)
 
