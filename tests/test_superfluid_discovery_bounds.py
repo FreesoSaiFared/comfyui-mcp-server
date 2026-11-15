@@ -147,6 +147,26 @@ class DiscoveryBoundsTests(unittest.TestCase):
             self.assertEqual(ReadonlyComfyUIClient(url).available_models, [])
             self.assertEqual(state["posts"], [])
 
+    def test_json_exponent_overflow_is_denied_in_ignored_metadata(self):
+        base = (b'{"CheckpointLoaderSimple":{"input":{"required":'
+                b'{"ckpt_name":[[]]}}},"ignored":')
+        for value in (b'1e9999', b'-1e9999', b'3.14e500'):
+            with self.subTest(value=value):
+                self.assert_rejected(base + value + b'}')
+
+    def test_finite_json_floats_still_preserve_discovery(self):
+        from superfluid_readonly import model_inventory
+        base = (b'{"CheckpointLoaderSimple":{"input":{"required":'
+                b'{"ckpt_name":[[]]}}},"ignored":')
+        for value in (b'0.0', b'-1.25', b'2.5e-6'):
+            with self.subTest(value=value):
+                with stub_server(base + value + b'}') as (url, state):
+                    self.assertTrue(safe_check_comfyui_available(url))
+                    observed = ReadonlyComfyUIClient(url).available_models
+                    self.assertEqual(observed, [])
+                    self.assertEqual(model_inventory(observed)["status"], "OBSERVED_ONLY")
+                    self.assertEqual(state["posts"], [])
+
     def test_clean_valid_small_response_preserves_discovery(self):
         with stub_server(make_payload()) as (url, state):
             self.assertTrue(safe_check_comfyui_available(url))
