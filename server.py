@@ -12,18 +12,6 @@ import requests
 
 from mcp.server.fastmcp import FastMCP
 
-from comfyui_client import ComfyUIClient
-from managers.asset_registry import AssetRegistry
-from managers.defaults_manager import DefaultsManager
-from managers.publish_manager import PublishConfig, PublishManager
-from managers.workflow_manager import WorkflowManager
-from tools.asset import register_asset_tools
-from tools.configuration import register_configuration_tools
-from tools.generation import register_workflow_generation_tools, register_regenerate_tool
-from tools.job import register_job_tools
-from tools.publish import register_publish_tools
-from tools.workflow import register_workflow_tools
-
 # In MCP stdio transport stdout belongs exclusively to JSON-RPC protocol
 # frames. Sending startup banners there corrupts the client session.
 STDIO_TRANSPORT = len(sys.argv) > 1 and sys.argv[1] == "--stdio"
@@ -46,6 +34,23 @@ if SUPERFLUID_MODE not in {"legacy", "readonly"}:
     raise SystemExit("SUPERFLUID_MODE must be legacy or readonly")
 if SUPERFLUID_MODE == "legacy" and os.getenv("SUPERFLUID_UNSAFE_LEGACY_ACK") != "YES_I_ACCEPT_UNGUARDED_PROMPT":
     raise SystemExit("LEGACY_EFFECTS_REQUIRE_EXPLICIT_RISK_ACK")
+
+# The read-only runtime MUST NOT import legacy effectful modules. Import-time
+# code and transitive dependencies are part of the security boundary.
+# Fail before loading these modules unless the explicit legacy risk guard passes.
+if SUPERFLUID_MODE == "legacy":
+    from comfyui_client import ComfyUIClient
+    from managers.asset_registry import AssetRegistry
+    from managers.defaults_manager import DefaultsManager
+    from managers.publish_manager import PublishConfig, PublishManager
+    from managers.workflow_manager import WorkflowManager
+    from tools.asset import register_asset_tools
+    from tools.configuration import register_configuration_tools
+    from tools.generation import register_workflow_generation_tools, register_regenerate_tool
+    from tools.job import register_job_tools
+    from tools.publish import register_publish_tools
+    from tools.workflow import register_workflow_tools
+
 
 WORKFLOW_DIR = Path(os.getenv("COMFY_MCP_WORKFLOW_DIR", str(Path(__file__).parent / "workflows")))
 
