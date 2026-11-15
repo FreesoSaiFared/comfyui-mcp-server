@@ -84,10 +84,41 @@ class AncestorDirfdTests(TestCase):
             p = Path(d).joinpath(*[f"part_{i}" for i in range(65)])
             self.assertIsNone(ReadonlyWorkflowCatalog(p).get_workflow_catalog())
 
-    def test_missing_nested_directory_stays_empty_unverified(self):
+    def test_missing_nested_directory_denies_unavailable_catalog(self):
         with TemporaryDirectory() as d:
             p = Path(d) / "missing" / "catalog"
+            self.assertIsNone(ReadonlyWorkflowCatalog(p).get_workflow_catalog())
+
+    def test_missing_final_directory_denies_unavailable_catalog(self):
+        with TemporaryDirectory() as d:
+            p = Path(d) / "missing"
+            self.assertIsNone(ReadonlyWorkflowCatalog(p).get_workflow_catalog())
+
+    def test_existing_empty_directory_is_observed_empty(self):
+        with TemporaryDirectory() as d:
+            p = Path(d) / "catalog"
+            p.mkdir()
             self.assertEqual(ReadonlyWorkflowCatalog(p).get_workflow_catalog(), [])
+
+    def test_directory_removed_during_component_walk_denies(self):
+        with TemporaryDirectory() as d:
+            base = Path(d)
+            parent = base / "parent"
+            catalog = parent / "catalog"
+            catalog.mkdir(parents=True)
+            real_open = os.open
+            removed = []
+
+            def remove_before_child_open(path, flags, *args, **kwargs):
+                if path == "catalog" and kwargs.get("dir_fd") is not None and not removed:
+                    catalog.rmdir()
+                    removed.append(True)
+                return real_open(path, flags, *args, **kwargs)
+
+            with patch("superfluid_readonly.os.open", side_effect=remove_before_child_open):
+                result = ReadonlyWorkflowCatalog(catalog).get_workflow_catalog()
+            self.assertTrue(removed)
+            self.assertIsNone(result)
 
     def test_intermediate_permission_error_closes_all_open_fds(self):
         with TemporaryDirectory() as d:
