@@ -79,7 +79,7 @@ class DiscoveryBoundsTests(unittest.TestCase):
                 "NO_PROXY": "",
             }):
                 self.assertFalse(safe_check_comfyui_available(url))
-                self.assertEqual(ReadonlyComfyUIClient(url).available_models, [])
+                self.assertIsNone(ReadonlyComfyUIClient(url).available_models)
             self.assertEqual(state["posts"], [])
             self.assertEqual(state["gets"], ["/object_info/CheckpointLoaderSimple"] * 2)
 
