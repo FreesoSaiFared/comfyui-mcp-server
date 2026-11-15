@@ -52,9 +52,10 @@ class CatalogDirfdTests(TestCase):
                 return original_open(path,flags,*args,**kwargs)
             with patch.object(readonly.os,'open',side_effect=observe_open):
                 self.assertEqual(len(readonly.ReadonlyWorkflowCatalog(p).get_workflow_catalog()),1)
-            self.assertEqual(len(captured),1)
-            self.assertTrue(captured[0][1]&os.O_DIRECTORY)
-            self.assertTrue(captured[0][1]&os.O_NOFOLLOW)
+            self.assertGreaterEqual(len(captured),2)
+            self.assertTrue(all(flags & os.O_DIRECTORY for _, flags in captured))
+            self.assertTrue(all(flags & os.O_NOFOLLOW for _, flags in captured))
+            self.assertTrue(all(flags & os.O_CLOEXEC for _, flags in captured))
 
     def test_closes_fd_on_scan_error(self):
         with TemporaryDirectory() as d:
