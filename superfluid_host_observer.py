@@ -15,7 +15,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-SCHEMA = "superfluid.host-proc-snapshot.v1"
+SCHEMA = "superfluid.host-proc-snapshot.v2"
 MAX_TCP_BYTES = 1024 * 1024
 MAX_FDS = 4096
 _NETNS = re.compile(r"^net:\[[0-9]{1,20}\]$")
@@ -24,6 +24,8 @@ _UNKNOWN = [
     "UNSIGNED_OWNER_LOCAL_OBSERVATION",
     "PROCESS_PURPOSE_AND_DEPLOYED_GIT_REVISION_NOT_ATTESTED",
     "OTHER_PROCESS_AND_SAME_NAMESPACE_BYPASSES_NOT_EXCLUDED",
+    "SHARED_INODE_ACCESS_BY_OTHER_PROCESSES_NOT_EXCLUDED",
+    "UNIX_SOCKET_TUNNELS_AND_CROSS_NAMESPACE_PORT_FORWARDING_NOT_INSPECTED",
     "PUBLISHED_PORTS_TUNNELS_FORWARDING_NOT_INSPECTED",
     "KERNEL_NFTABLES_CONTAINER_NETWORK_POLICY_NOT_INSPECTED",
     "INDEPENDENT_UNTRUSTED_PRINCIPAL_REACHABILITY_NOT_TESTED",
@@ -85,7 +87,7 @@ def parse_tcp_listeners(data: str, *, ipv6: bool) -> list[dict]:
     return result
 
 
-def _snapshot_process(pid: int, proc_root: Path) -> dict:
+def _snapshot_process(pid: int, proc_root: Path, expected_port: int | None = None) -> dict:
     if type(pid) is not int or pid < 1 or pid > 4194304:
         raise ValueError("INVALID_PID")
     base = proc_root / str(pid)
@@ -108,17 +110,30 @@ def _snapshot_process(pid: int, proc_root: Path) -> dict:
             if match:
                 inodes.add(match.group(1))
     candidates = []
+    namespace_expected = []
     for filename, is_v6 in [("tcp", False), ("tcp6", True)]:
         rows = parse_tcp_listeners(_bounded(base / "net" / filename, MAX_TCP_BYTES), ipv6=is_v6)
         candidates.extend(x for x in rows if x["inode"] in inodes)
+        if expected_port is not None:
+            namespace_expected.extend(x for x in rows if x["port"] == expected_port)
     end = _start_ticks(base / "stat")
     netns2 = os.readlink(base / "ns/net")
     if start != end or netns != netns2:
         raise ValueError("PID_IDENTITY_OR_NAMESPACE_CHANGED")
-    # Exclude socket inode from receipt (local ephemeral detail); deterministic ordering.
+    # A second socket can listen on the same endpoint via SO_REUSEPORT or
+    # a namespace proxy. The named process may own one inode while a different
+    # process owns another. Compare the namespace table against selected FDs.
+    # This detects negative evidence, never proves exclusive ownership (FDs
+    # may be shared by other processes; namespace tables can race).
+    others = [x for x in namespace_expected if x["inode"] not in inodes]
+    other_endpoints = sorted({(x["bind_ip"], x["port"]) for x in others})
+    # Exclude socket inodes from receipt (local ephemeral detail).
     listens = sorted({(x["bind_ip"], x["port"]) for x in candidates})
     return {"pid": pid, "start_ticks": start, "netns": netns,
             "tcp_listeners": [{"bind_ip": ip, "port": port} for ip, port in listens],
+            "namespace_extra_listener_count_on_expected_port": len(others),
+            "namespace_extra_listener_endpoints_on_expected_port": [
+                {"bind_ip": ip, "port": port} for ip, port in other_endpoints],
             "socket_fd_count": len(inodes)}
 
 
@@ -132,9 +147,12 @@ def collect_snapshot(host_label: str, comfyui_pid: int, mcp_pid: int,
     processes: dict[str, Any] = {}
     if (not isinstance(host_label, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", host_label)):
         blockers.append("INVALID_HOST_LABEL")
+    requested = {"comfyui": comfyui_port, "mcp": mcp_port}
     for key, pid in [("comfyui", comfyui_pid), ("mcp", mcp_pid)]:
         try:
-            processes[key] = _snapshot_process(pid, proc_root)
+            port = requested[key]
+            checked_port = port if type(port) is int and 1 <= port <= 65535 else None
+            processes[key] = _snapshot_process(pid, proc_root, expected_port=checked_port)
         except (OSError, ValueError, UnicodeError) as exc:
             # Codes rather than paths or exception text (minimizes private leakage).
             processes[key] = None
@@ -154,6 +172,8 @@ def collect_snapshot(host_label: str, comfyui_pid: int, mcp_pid: int,
                 blockers.append(key.upper() + "_NON_LITERAL_LOOPBACK_LISTENER")
         if any(x["port"] != port for x in p["tcp_listeners"]):
             blockers.append(key.upper() + "_ADDITIONAL_TCP_LISTENER_OBSERVED")
+        if p["namespace_extra_listener_count_on_expected_port"]:
+            blockers.append(key.upper() + "_NAMESPACE_OTHER_FD_LISTENER_ON_EXPECTED_PORT")
     a, b = processes.get("comfyui"), processes.get("mcp")
     if a and b and a["netns"] == b["netns"]:
         # Co-location is not proof of a bypass, but explicitly signals risk.
