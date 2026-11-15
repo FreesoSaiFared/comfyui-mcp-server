@@ -130,6 +130,10 @@ def wait_for_comfyui(base_url: str, max_retries: int = COMFYUI_MAX_RETRIES,
 print_startup_banner()
 
 # Check ComfyUI availability before initializing clients
+if SUPERFLUID_MODE == "readonly":
+    from superfluid_safe_comfy import safe_check_comfyui_available
+    check_comfyui_available = safe_check_comfyui_available
+
 if not check_comfyui_available(COMFYUI_URL):
     if not wait_for_comfyui(COMFYUI_URL):
         print("\n" + "=" * 70)
