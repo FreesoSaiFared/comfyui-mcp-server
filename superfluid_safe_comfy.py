@@ -38,7 +38,7 @@ def _read_discovery_payload(base_url: str) -> dict | None:
             # Cheap early rejection only: Content-Length can be absent/false.
             length = response.headers.get("Content-Length")
             if length is not None:
-                if not length.isdecimal() or int(length) > MAX_DISCOVERY_BYTES:
+                if len(length) > 12 or not length.isascii() or not length.isdecimal() or int(length) > MAX_DISCOVERY_BYTES:
                     return None
             body = bytearray()
             for part in response.iter_content(chunk_size=DISCOVERY_CHUNK_BYTES):
