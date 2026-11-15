@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 SCHEMA = "superfluid.host-isolation-observation.v1"
-_NAMESPACE = re.compile(r"^net:\\[[0-9]{1,20}\\]$")
+_NAMESPACE = re.compile(r"^net:\[[0-9]{1,20}\]$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _ALLOWED_KEYS = {"schema", "provenance", "observations"}
 _EFFECT_CLAIMS = {"permit", "execution_authorized", "approved", "signature", "status"}
