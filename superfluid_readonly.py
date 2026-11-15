@@ -12,6 +12,8 @@ from typing import Any
 
 MAX_MODELS = 500
 MAX_WORKFLOWS = 500
+# Check kernel dir_fd capability against the unmodified builtin, not a test spy.
+_NATIVE_OS_OPEN = os.open
 _SAFE_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,199}$")
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 
@@ -81,7 +83,7 @@ class ReadonlyWorkflowCatalog:
         # Linux/POSIX-only; unsupported platforms fail closed.
         if not all(hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW", "O_CLOEXEC")):
             return None
-        if os.open not in getattr(os, "supports_dir_fd", ()):
+        if _NATIVE_OS_OPEN not in getattr(os, "supports_dir_fd", ()):
             return None
         components = root.parts[1:] if root.is_absolute() else root.parts
         if len(components) > 64 or any(component == ".." for component in components):
