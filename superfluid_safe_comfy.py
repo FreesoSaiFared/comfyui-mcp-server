@@ -130,6 +130,34 @@ def validate_loopback_comfy_url(value: str) -> str:
     return f"{parts.scheme}://{host}:{port}"
 
 
+
+def _snapshot_model_names(payload: object) -> list | None:
+    """Extract the only trusted *shape* of checkpoint choices, not identity.
+
+    A missing, malformed, or adversarial snapshot is UNAVAILABLE (None), not
+    a valid empty inventory ([]). Values remain untrusted until the separate
+    bounded model_inventory check; no filename here grants execution rights.
+    """
+    if type(payload) is not dict:
+        return None
+    node = payload.get("CheckpointLoaderSimple")
+    if type(node) is not dict:
+        return None
+    inputs = node.get("input")
+    if type(inputs) is not dict:
+        return None
+    required = inputs.get("required")
+    if type(required) is not dict:
+        return None
+    field = required.get("ckpt_name")
+    if type(field) is not list or not field or type(field[0]) is not list:
+        return None
+    choices = field[0]
+    if not all(type(name) is str for name in choices):
+        return None
+    return choices
+
+
 def safe_check_comfyui_available(base_url: str) -> bool:
     """Readonly preflight: no environment proxy, redirect, or non-loopback egress.
 
@@ -137,7 +165,7 @@ def safe_check_comfyui_available(base_url: str) -> bool:
     not network isolation, trust in the reply, or execution authorization.
     """
     payload = _read_discovery_payload(base_url)
-    return isinstance(payload, dict) and isinstance(payload.get("CheckpointLoaderSimple"), dict)
+    return _snapshot_model_names(payload) is not None
 
 
 class ReadonlyComfyUIClient:
@@ -160,33 +188,26 @@ class ReadonlyComfyUIClient:
         guarded read-only startup path supplies this snapshot.
         """
         base_url = validate_loopback_comfy_url(base_url)
-        if not isinstance(payload, dict) or not isinstance(payload.get("CheckpointLoaderSimple"), dict):
+        names = _snapshot_model_names(payload)
+        if names is None:
             raise ReadonlyBoundaryDenied("INVALID_READONLY_DISCOVERY_SNAPSHOT")
         instance = object.__new__(cls)
         instance.base_url = base_url
-        instance.available_models = cls._names_from_payload(payload)
+        instance.available_models = names
         return instance
 
     @staticmethod
-    def _names_from_payload(payload: dict) -> list:
-        try:
-            values = payload.get("CheckpointLoaderSimple", {}).get("input", {}).get("required", {}).get("ckpt_name")
-            if not isinstance(values, list) or not values or not isinstance(values[0], list):
-                return []
-            return values[0]
-        except (TypeError, AttributeError):
-            return []
+    def _names_from_payload(payload: object) -> list | None:
+        return _snapshot_model_names(payload)
 
-    def _get_available_models(self) -> list:
+    def _get_available_models(self) -> list | None:
         try:
             payload = _read_discovery_payload(self.base_url)
-            if not isinstance(payload, dict):
-                return []
-            # No model filename can authorize inference or verify its bytes.
-            # The MCP inventory tool validates names and count separately.
+            # Keep invalid/unavailable data as None. model_inventory(None)
+            # yields DENY, rather than laundering failures into OBSERVED_ONLY.
             return self._names_from_payload(payload)
         except (TypeError, AttributeError):
-            return []
+            return None
 
     def _queue_workflow(self, workflow):
         raise ReadonlyBoundaryDenied("SUPERFLUID_READONLY_NO_PROMPT")
