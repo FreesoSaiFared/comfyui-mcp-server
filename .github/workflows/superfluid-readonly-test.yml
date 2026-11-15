@@ -27,6 +27,10 @@ jobs:
           python -m pip freeze > evidence/PIP_FREEZE.txt
           python -m py_compile server.py superfluid_readonly.py tests/test_superfluid_readonly.py
           python -m unittest discover -s tests -p test_superfluid_readonly.py -v 2>&1 | tee evidence/TESTS.log
+          python tests/superfluid_protocol_probe.py 2>&1 | tee evidence/ACTUAL_MCP_HTTP_PROTOCOL.log
+          mkdir -p evidence/source
+          cp server.py superfluid_readonly.py requirements.txt tests/test_superfluid_readonly.py tests/superfluid_protocol_probe.py evidence/source/
+          git diff --binary e0101b2312f30501664dabe4a74c1283c4268eb8..HEAD > evidence/OWNER_FORK_BASE_TO_REVIEW_BRANCH.patch
           git rev-parse HEAD > evidence/SOURCE_COMMIT.txt
           git status --porcelain=v1 > evidence/WORKTREE_STATUS.txt
           git hash-object server.py superfluid_readonly.py tests/test_superfluid_readonly.py > evidence/SOURCE_BLOB_SHA.txt
