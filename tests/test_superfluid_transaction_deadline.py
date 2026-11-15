@@ -72,7 +72,7 @@ class TransactionDeadlineTests(unittest.TestCase):
         with wire_stub(drip_headers=0.025,padding=60) as (url, observed):
             with patch.object(guard,"MAX_DISCOVERY_BODY_SECONDS",0.2):
                 started=time.monotonic()
-                self.assertEqual(ReadonlyComfyUIClient(url).available_models,[])
+                self.assertIsNone(ReadonlyComfyUIClient(url).available_models)
                 self.assertLess(time.monotonic()-started,0.9)
             self.assertEqual(observed["post"],0)
 
