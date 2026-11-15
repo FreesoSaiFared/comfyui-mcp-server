@@ -35,7 +35,7 @@ jobs:
           git rev-parse HEAD > evidence/SOURCE_COMMIT.txt
           git status --porcelain=v1 > evidence/WORKTREE_STATUS.txt
           git hash-object server.py superfluid_readonly.py superfluid_safe_comfy.py superfluid_host_isolation.py superfluid_host_observer.py tests/test_superfluid_readonly.py tests/test_superfluid_safe_comfy.py tests/test_superfluid_host_isolation.py tests/test_superfluid_host_observer.py > evidence/SOURCE_BLOB_SHA.txt
-          sha256sum server.py superfluid_readonly.py superfluid_safe_comfy.py superfluid_host_isolation.py superfluid_host_observer.py tests/test_superfluid_readonly.py tests/test_superfluid_safe_comfy.py tests/test_superfluid_host_isolation.py tests/test_superfluid_host_observer.py docs/HOST_ISOLATION_CONTRACT.md docs/HOST_OBSERVER_HANDOFF.md > evidence/SOURCE_SHA256SUMS.txt
+          sha256sum server.py superfluid_readonly.py superfluid_safe_comfy.py superfluid_host_isolation.py superfluid_host_observer.py tests/test_superfluid_readonly.py tests/test_superfluid_safe_comfy.py tests/test_superfluid_host_isolation.py tests/test_superfluid_host_observer.py docs/HOST_ISOLATION_CONTRACT.md docs/HOST_OBSERVER_HANDOFF.md docs/HOST_SHARED_PORT_AUDIT.md > evidence/SOURCE_SHA256SUMS.txt
       - name: Preserve test provenance
         if: always()
         uses: actions/upload-artifact@v4
