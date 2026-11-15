@@ -81,11 +81,15 @@ class ReadonlyCapabilityFenceTests(unittest.TestCase):
             self.assertIsNone(ReadonlyWorkflowCatalog(p).get_workflow_catalog())
             self.assertNotIn("unsafe name", str(workflow_inventory(None)))
 
-    def test_catalog_missing_dir_is_empty_observation(self):
+    def test_catalog_missing_dir_is_denied_unavailable(self):
         with tempfile.TemporaryDirectory() as d:
             p = Path(d) / "absent"
-            self.assertEqual(ReadonlyWorkflowCatalog(p).get_workflow_catalog(), [])
-            self.assertFalse(workflow_inventory([])["execution_authorized"])
+            observation = ReadonlyWorkflowCatalog(p).get_workflow_catalog()
+            self.assertIsNone(observation)
+            decision = workflow_inventory(observation)
+            self.assertEqual(decision["status"], "DENY")
+            self.assertEqual(decision["workflows"], [])
+            self.assertFalse(decision["execution_authorized"])
 
     def test_catalog_file_instead_of_directory_denies(self):
         with tempfile.TemporaryDirectory() as d:
