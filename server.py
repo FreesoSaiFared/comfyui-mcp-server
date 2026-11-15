@@ -29,10 +29,12 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MCP_Server")
 
 # Configuration paths
-# Default remains the upstream legacy mode. Readonly is an opt-in review surface.
-SUPERFLUID_MODE = os.getenv("SUPERFLUID_MODE", "legacy")
+# This review branch defaults to read-only. Unrestricted legacy execution is explicit-risk opt-in.
+SUPERFLUID_MODE = os.getenv("SUPERFLUID_MODE", "readonly")
 if SUPERFLUID_MODE not in {"legacy", "readonly"}:
     raise SystemExit("SUPERFLUID_MODE must be legacy or readonly")
+if SUPERFLUID_MODE == "legacy" and os.getenv("SUPERFLUID_UNSAFE_LEGACY_ACK") != "YES_I_ACCEPT_UNGUARDED_PROMPT":
+    raise SystemExit("LEGACY_EFFECTS_REQUIRE_EXPLICIT_RISK_ACK")
 
 WORKFLOW_DIR = Path(os.getenv("COMFY_MCP_WORKFLOW_DIR", str(Path(__file__).parent / "workflows")))
 
@@ -40,7 +42,10 @@ WORKFLOW_DIR = Path(os.getenv("COMFY_MCP_WORKFLOW_DIR", str(Path(__file__).paren
 ASSET_TTL_HOURS = int(os.getenv("COMFY_MCP_ASSET_TTL_HOURS", "24"))
 
 # ComfyUI connection configuration
-COMFYUI_URL = os.getenv("COMFYUI_URL", "http://localhost:8188")
+COMFYUI_URL = os.getenv("COMFYUI_URL", "http://127.0.0.1:8188")
+if SUPERFLUID_MODE == "readonly":
+    from superfluid_safe_comfy import validate_loopback_comfy_url
+    COMFYUI_URL = validate_loopback_comfy_url(COMFYUI_URL)
 COMFYUI_MAX_RETRIES = 5  # Number of retry attempts
 COMFYUI_INITIAL_DELAY = 2  # Initial delay in seconds
 COMFYUI_MAX_DELAY = 16  # Maximum delay in seconds
@@ -135,8 +140,12 @@ if not check_comfyui_available(COMFYUI_URL):
         print("=" * 70 + "\n")
         sys.exit(1)
 
-# Global ComfyUI client (fallback since context isn't available)
-comfyui_client = ComfyUIClient(COMFYUI_URL)
+# Read-only client refuses queue/cancel and never follows redirect or environment proxy.
+if SUPERFLUID_MODE == "readonly":
+    from superfluid_safe_comfy import ReadonlyComfyUIClient
+    comfyui_client = ReadonlyComfyUIClient(COMFYUI_URL)
+else:
+    comfyui_client = ComfyUIClient(COMFYUI_URL)
 workflow_manager = WorkflowManager(WORKFLOW_DIR)
 defaults_manager = None if SUPERFLUID_MODE == "readonly" else DefaultsManager(comfyui_client)
 asset_registry = None if SUPERFLUID_MODE == "readonly" else AssetRegistry(ttl_hours=ASSET_TTL_HOURS, comfyui_base_url=COMFYUI_URL)
