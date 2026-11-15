@@ -193,6 +193,15 @@ class OneShotStartup(unittest.TestCase):
         self.assertEqual(gets, ["/object_info/CheckpointLoaderSimple"])
         self.assertEqual(posts, 0)
 
+    def test_numeric_overflow_first_response_fails_without_retry(self):
+        raw = (b'{"CheckpointLoaderSimple":{"input":{"required":'
+               b'{"ckpt_name":[[]]}}},"ignored":1e9999}')
+        proc, gets, posts = self.run_child(first_payload=raw)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("READONLY_DISCOVERY_UNAVAILABLE", proc.stderr + proc.stdout)
+        self.assertEqual(gets, ["/object_info/CheckpointLoaderSimple"])
+        self.assertEqual(posts, 0)
+
     def test_server_error_fails_without_retrying(self):
         proc, gets, posts = self.run_child(status=503)
         self.assertNotEqual(proc.returncode, 0)
