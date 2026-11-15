@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from urllib.parse import urlsplit
 import requests
-from comfyui_client import ComfyUIClient
 
 
 class ReadonlyBoundaryDenied(RuntimeError):
@@ -67,13 +66,14 @@ def safe_check_comfyui_available(base_url: str) -> bool:
         session.close()
 
 
-class ReadonlyComfyUIClient(ComfyUIClient):
-    """Minimal inherited name parser but no queue/prompt or cancellation authority."""
+class ReadonlyComfyUIClient:
+    """Standalone discovery-only client; deliberately inherits no execution methods."""
+
+    __slots__ = ("base_url", "available_models")
 
     def __init__(self, base_url: str):
         base_url = validate_loopback_comfy_url(base_url)
-        # Do not call superclass __init__: it uses requests.get with redirects
-        # and trusts environment HTTP proxy settings.
+        # No superclass: effectful ComfyUIClient API is not inherited.
         self.base_url = base_url
         self.available_models = self._get_available_models()
 
