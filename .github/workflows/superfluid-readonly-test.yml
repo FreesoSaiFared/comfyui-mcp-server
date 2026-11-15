@@ -10,11 +10,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # pinned v4; verified GitHub ref 2026-11-15
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # pinned v5; verified GitHub ref 2026-11-15
         with:
           python-version: '3.11'
       - name: Fresh isolated Python environment and exact-source test
@@ -39,7 +39,7 @@ jobs:
           sha256sum server.py superfluid_readonly.py superfluid_safe_comfy.py superfluid_host_isolation.py superfluid_host_observer.py tests/test_superfluid_readonly.py tests/test_superfluid_safe_comfy.py tests/test_superfluid_host_isolation.py tests/test_superfluid_host_observer.py tests/test_superfluid_kernel_observer.py tests/test_superfluid_capability_fence.py tests/test_superfluid_import_fence.py tests/test_superfluid_discovery_bounds.py tests/test_superfluid_discovery_deadline.py tests/test_superfluid_transaction_deadline.py tests/test_superfluid_single_snapshot.py tests/test_superfluid_dirfd_catalog.py tests/test_superfluid_ancestor_dirfd.py tests/superfluid_stdio_probe.py docs/HOST_ISOLATION_CONTRACT.md docs/HOST_OBSERVER_HANDOFF.md docs/HOST_SHARED_PORT_AUDIT.md docs/M088_REAL_KERNEL_OBSERVER_PROBE.md docs/M089_STDIO_PROTOCOL_INTEGRITY.md docs/M090_READONLY_CAPABILITY_MINIMIZATION.md docs/M091_READONLY_IMPORT_FENCE.md docs/M092_BOUNDED_DISCOVERY.md docs/M093_SLOW_BODY_DEADLINE.md docs/M098_COMPLETE_TRANSACTION_DEADLINE.md docs/M099_SINGLE_SNAPSHOT_STARTUP.md docs/M100_WORKFLOW_DIRFD_PIN.md docs/M101_ANCESTOR_DIRFD_PIN.md > evidence/SOURCE_SHA256SUMS.txt
       - name: Preserve test provenance
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # pinned v4; verified GitHub ref 2026-11-15
         with:
           name: superfluid-readonly-real-fork-tests
           path: evidence/
