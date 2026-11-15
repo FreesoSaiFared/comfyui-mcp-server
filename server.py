@@ -29,6 +29,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MCP_Server")
 
 # Configuration paths
+# Default remains the upstream legacy mode. Readonly is an opt-in review surface.
+SUPERFLUID_MODE = os.getenv("SUPERFLUID_MODE", "legacy")
+if SUPERFLUID_MODE not in {"legacy", "readonly"}:
+    raise SystemExit("SUPERFLUID_MODE must be legacy or readonly")
+
 WORKFLOW_DIR = Path(os.getenv("COMFY_MCP_WORKFLOW_DIR", str(Path(__file__).parent / "workflows")))
 
 # Asset registry configuration
@@ -136,28 +141,31 @@ workflow_manager = WorkflowManager(WORKFLOW_DIR)
 defaults_manager = DefaultsManager(comfyui_client)
 asset_registry = AssetRegistry(ttl_hours=ASSET_TTL_HOURS, comfyui_base_url=COMFYUI_URL)
 
-# Publish manager (always initialized, uses auto-detection)
-try:
-    publish_config = PublishConfig(
-        comfyui_output_root=COMFYUI_OUTPUT_ROOT,
-        comfyui_url=COMFYUI_URL
-    )
-    publish_manager = PublishManager(publish_config)
-    logger.info(f"Publish manager initialized with project_root={publish_config.project_root} (method: {publish_config.project_root_method})")
-    logger.info(f"Publish root: {publish_config.publish_root}")
-    if publish_config.comfyui_output_root:
-        logger.info(f"ComfyUI output root: {publish_config.comfyui_output_root} (method: {publish_config.comfyui_output_method})")
-    else:
-        logger.info(f"ComfyUI output root: not configured (tried {len(publish_config.comfyui_tried_paths)} paths)")
-except Exception as e:
-    logger.warning(f"Failed to initialize publish manager: {e}. Publishing features may be unavailable.")
-    # Still create a minimal manager so tools can register and return errors
+# Publishing setup is intentionally absent in read-only mode.
+publish_manager = None
+if SUPERFLUID_MODE != "readonly":
+    # Publish manager (always initialized, uses auto-detection)
     try:
-        from managers.publish_manager import PublishConfig, PublishManager
-        publish_config = PublishConfig(comfyui_url=COMFYUI_URL)
+        publish_config = PublishConfig(
+            comfyui_output_root=COMFYUI_OUTPUT_ROOT,
+            comfyui_url=COMFYUI_URL
+        )
         publish_manager = PublishManager(publish_config)
-    except Exception:
-        publish_manager = None
+        logger.info(f"Publish manager initialized with project_root={publish_config.project_root} (method: {publish_config.project_root_method})")
+        logger.info(f"Publish root: {publish_config.publish_root}")
+        if publish_config.comfyui_output_root:
+            logger.info(f"ComfyUI output root: {publish_config.comfyui_output_root} (method: {publish_config.comfyui_output_method})")
+        else:
+            logger.info(f"ComfyUI output root: not configured (tried {len(publish_config.comfyui_tried_paths)} paths)")
+    except Exception as e:
+        logger.warning(f"Failed to initialize publish manager: {e}. Publishing features may be unavailable.")
+        # Still create a minimal manager so tools can register and return errors
+        try:
+            from managers.publish_manager import PublishConfig, PublishManager
+            publish_config = PublishConfig(comfyui_url=COMFYUI_URL)
+            publish_manager = PublishManager(publish_config)
+        except Exception:
+            publish_manager = None
 
 
 # Define application context (for future use)
@@ -190,18 +198,23 @@ mcp = FastMCP(
     stateless_http=True
 )
 
-# Register all MCP tools
-register_configuration_tools(mcp, comfyui_client, defaults_manager)
-register_workflow_tools(mcp, workflow_manager, comfyui_client, defaults_manager, asset_registry)
-register_asset_tools(mcp, asset_registry)
-register_workflow_generation_tools(mcp, workflow_manager, comfyui_client, defaults_manager, asset_registry)
-register_regenerate_tool(mcp, comfyui_client, asset_registry)
-register_job_tools(mcp, comfyui_client, asset_registry)
-# Always register publish tools (unconditional)
-if publish_manager:
-    register_publish_tools(mcp, asset_registry, publish_manager)
+# Admission-mode tool registration: no generation/publish/mutation tools are reachable.
+if SUPERFLUID_MODE == "readonly":
+    from superfluid_readonly import register_superfluid_readonly_tools
+    register_superfluid_readonly_tools(mcp, comfyui_client, workflow_manager)
 else:
-    logger.error("Publish manager not available - publish tools will not be registered")
+    # Register all MCP tools
+    register_configuration_tools(mcp, comfyui_client, defaults_manager)
+    register_workflow_tools(mcp, workflow_manager, comfyui_client, defaults_manager, asset_registry)
+    register_asset_tools(mcp, asset_registry)
+    register_workflow_generation_tools(mcp, workflow_manager, comfyui_client, defaults_manager, asset_registry)
+    register_regenerate_tool(mcp, comfyui_client, asset_registry)
+    register_job_tools(mcp, comfyui_client, asset_registry)
+    # Always register publish tools (unconditional)
+    if publish_manager:
+        register_publish_tools(mcp, asset_registry, publish_manager)
+    else:
+        logger.error("Publish manager not available - publish tools will not be registered")
 
 if __name__ == "__main__":
     # Check if running as MCP command (stdio) or standalone (streamable-http)
