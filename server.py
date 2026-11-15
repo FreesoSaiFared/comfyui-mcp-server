@@ -6,7 +6,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncIterator
+from typing import AsyncIterator, Any
 
 import requests
 
@@ -161,7 +161,11 @@ if SUPERFLUID_MODE == "readonly":
     comfyui_client = ReadonlyComfyUIClient(COMFYUI_URL)
 else:
     comfyui_client = ComfyUIClient(COMFYUI_URL)
-workflow_manager = WorkflowManager(WORKFLOW_DIR)
+if SUPERFLUID_MODE == "readonly":
+    from superfluid_readonly import ReadonlyWorkflowCatalog
+    workflow_manager = ReadonlyWorkflowCatalog(WORKFLOW_DIR)
+else:
+    workflow_manager = WorkflowManager(WORKFLOW_DIR)
 defaults_manager = None if SUPERFLUID_MODE == "readonly" else DefaultsManager(comfyui_client)
 asset_registry = None if SUPERFLUID_MODE == "readonly" else AssetRegistry(ttl_hours=ASSET_TTL_HOURS, comfyui_base_url=COMFYUI_URL)
 
@@ -194,7 +198,7 @@ if SUPERFLUID_MODE != "readonly":
 
 # Define application context (for future use)
 class AppContext:
-    def __init__(self, comfyui_client: ComfyUIClient):
+    def __init__(self, comfyui_client: Any):
         self.comfyui_client = comfyui_client
 
 
