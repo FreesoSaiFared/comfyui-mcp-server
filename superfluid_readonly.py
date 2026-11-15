@@ -5,7 +5,9 @@ installation, cancellation, defaults-mutation, or publish tools. Model names are
 untrusted inventory hints, never cryptographic identity or GPU admission.
 """
 from __future__ import annotations
+import os
 import re
+from pathlib import Path
 from typing import Any
 
 MAX_MODELS = 500
@@ -55,6 +57,48 @@ def workflow_inventory(raw: Any) -> dict:
     return {"status": "OBSERVED_ONLY", "workflows": sorted(clean, key=lambda x:x["id"]), "count": len(clean),
             "verified_workflow_count": 0, "execution_authorized": False}
 
+
+
+class ReadonlyWorkflowCatalog:
+    """Names-only directory inventory; never parses workflow or metadata files.
+
+    This is NOT a validated/approved workflow catalog. Bounded enumeration and
+    no path-following prevent read-only startup from interpreting large or
+    untrusted local JSON files merely for an MCP discovery tool.
+    """
+
+    MAX_DIR_ENTRIES = 2048
+
+    def __init__(self, workflows_dir: Path):
+        self.workflows_dir = Path(workflows_dir)
+
+    def get_workflow_catalog(self) -> list[dict] | None:
+        root = self.workflows_dir
+        try:
+            if root.is_symlink():
+                return None
+            if not root.exists():
+                return []
+            names: list[dict] = []
+            with os.scandir(root) as entries:
+                for i, entry in enumerate(entries):
+                    if i >= self.MAX_DIR_ENTRIES:
+                        return None
+                    name = entry.name
+                    if not name.endswith(".json") or name.endswith(".meta.json"):
+                        continue
+                    # Reject rather than follow a symlink or unexpected file.
+                    if not entry.is_file(follow_symlinks=False):
+                        return None
+                    ident = name[:-5]
+                    if not _SAFE_ID.fullmatch(ident):
+                        return None
+                    if len(names) >= MAX_WORKFLOWS:
+                        return None
+                    names.append({"id": ident, "name": ident.replace("_", " ").title()})
+            return names
+        except OSError:
+            return None
 
 def register_superfluid_readonly_tools(mcp, comfyui_client, workflow_manager):
     """Register an explicit allowlist, not an effectful MCP tool manager."""
