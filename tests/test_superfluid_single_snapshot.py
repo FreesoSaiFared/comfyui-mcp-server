@@ -50,9 +50,30 @@ class SnapshotBoundary(unittest.TestCase):
         with self.assertRaisesRegex(ReadonlyBoundaryDenied, "UNSAFE_COMFYUI_URL"):
             ReadonlyComfyUIClient.from_observed_payload("http://example.com:8188", {"CheckpointLoaderSimple": {}})
 
-    def test_snapshot_extracts_no_names_from_malformed_nested_fields(self):
-        client = ReadonlyComfyUIClient.from_observed_payload("http://127.0.0.1:8188", {"CheckpointLoaderSimple": {"input": "untrusted"}})
+    def test_malformed_nested_snapshot_is_denied_not_empty(self):
+        malformed = [
+            {"CheckpointLoaderSimple": {}},
+            {"CheckpointLoaderSimple": {"input": "untrusted"}},
+            {"CheckpointLoaderSimple": {"input": {}}},
+            {"CheckpointLoaderSimple": {"input": {"required": {}}}},
+            {"CheckpointLoaderSimple": {"input": {"required": {"ckpt_name": []}}}},
+            {"CheckpointLoaderSimple": {"input": {"required": {"ckpt_name": ["bad"]}}}},
+            {"CheckpointLoaderSimple": {"input": {"required": {"ckpt_name": [[None]]}}}},
+        ]
+        for payload in malformed:
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(ReadonlyBoundaryDenied, "INVALID_READONLY_DISCOVERY_SNAPSHOT"):
+                    ReadonlyComfyUIClient.from_observed_payload("http://127.0.0.1:8188", payload)
+
+    def test_valid_empty_choices_are_observed_not_unavailable(self):
+        from superfluid_readonly import model_inventory
+        valid_empty = {"CheckpointLoaderSimple": {"input": {"required": {"ckpt_name": [[]]}}}}
+        client = ReadonlyComfyUIClient.from_observed_payload("http://127.0.0.1:8188", valid_empty)
         self.assertEqual(client.available_models, [])
+        decision = model_inventory(client.available_models)
+        self.assertEqual(decision["status"], "OBSERVED_ONLY")
+        self.assertEqual(decision["count"], 0)
+        self.assertFalse(decision["execution_authorized"])
 
 
 class OneShotBackend(BaseHTTPRequestHandler):
@@ -141,6 +162,25 @@ class OneShotStartup(unittest.TestCase):
         proc, gets, posts = self.run_child(first_payload={"wrong_schema": True})
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("READONLY_DISCOVERY_UNAVAILABLE", proc.stderr + proc.stdout)
+        self.assertEqual(gets, ["/object_info/CheckpointLoaderSimple"])
+        self.assertEqual(posts, 0)
+
+    def test_invalid_nested_first_response_fails_with_one_get(self):
+        payload = {"CheckpointLoaderSimple": {"input": {"required": {}}}}
+        proc, gets, posts = self.run_child(first_payload=payload)
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("READONLY_DISCOVERY_UNAVAILABLE", proc.stderr + proc.stdout)
+        self.assertEqual(gets, ["/object_info/CheckpointLoaderSimple"])
+        self.assertEqual(posts, 0)
+
+    def test_valid_empty_first_response_preserves_one_get(self):
+        payload = {"CheckpointLoaderSimple": {"input": {"required": {"ckpt_name": [[]]}}}}
+        proc, gets, posts = self.run_child(first_payload=payload)
+        self.assertEqual(proc.returncode, 0, proc.stderr[-2000:])
+        receipts = [json.loads(x.split("M099_STARTUP_RECEIPT:", 1)[1])
+                    for x in proc.stdout.splitlines() if "M099_STARTUP_RECEIPT:" in x]
+        self.assertEqual(len(receipts), 1)
+        self.assertEqual(receipts[0]["models"], [])
         self.assertEqual(gets, ["/object_info/CheckpointLoaderSimple"])
         self.assertEqual(posts, 0)
 
