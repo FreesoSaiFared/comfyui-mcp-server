@@ -195,7 +195,8 @@ mcp = FastMCP(
     "ComfyUI_MCP_Server",
     lifespan=app_lifespan,
     port=9000,
-    stateless_http=True
+    stateless_http=True,
+    **({"host": "127.0.0.1"} if SUPERFLUID_MODE == "readonly" else {})
 )
 
 # Admission-mode tool registration: no generation/publish/mutation tools are reachable.
