@@ -151,17 +151,40 @@ class ReadonlyComfyUIClient:
         self.base_url = base_url
         self.available_models = self._get_available_models()
 
+    @classmethod
+    def from_observed_payload(cls, base_url: str, payload: dict):
+        """Construct from the single *startup* GET, without a second request.
+
+        The supplied payload is untrusted discovery metadata, not an authority
+        token or proof of a model's identity or rights. Only the server's
+        guarded read-only startup path supplies this snapshot.
+        """
+        base_url = validate_loopback_comfy_url(base_url)
+        if not isinstance(payload, dict) or not isinstance(payload.get("CheckpointLoaderSimple"), dict):
+            raise ReadonlyBoundaryDenied("INVALID_READONLY_DISCOVERY_SNAPSHOT")
+        instance = object.__new__(cls)
+        instance.base_url = base_url
+        instance.available_models = cls._names_from_payload(payload)
+        return instance
+
+    @staticmethod
+    def _names_from_payload(payload: dict) -> list:
+        try:
+            values = payload.get("CheckpointLoaderSimple", {}).get("input", {}).get("required", {}).get("ckpt_name")
+            if not isinstance(values, list) or not values or not isinstance(values[0], list):
+                return []
+            return values[0]
+        except (TypeError, AttributeError):
+            return []
+
     def _get_available_models(self) -> list:
         try:
             payload = _read_discovery_payload(self.base_url)
             if not isinstance(payload, dict):
                 return []
-            values = payload.get("CheckpointLoaderSimple", {}).get("input", {}).get("required", {}).get("ckpt_name")
-            if not isinstance(values, list) or not values or not isinstance(values[0], list):
-                return []
-            # The MCP inventory function still validates names and count.
             # No model filename can authorize inference or verify its bytes.
-            return values[0]
+            # The MCP inventory tool validates names and count separately.
+            return self._names_from_payload(payload)
         except (TypeError, AttributeError):
             return []
 
