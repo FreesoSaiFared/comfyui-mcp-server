@@ -63,6 +63,48 @@ class ReadonlyContracts(unittest.TestCase):
             self.assertEqual(workflow_inventory(bad)["status"],"DENY")
 
 
+    def test_workflow_ids_require_plain_strings(self):
+        for bad_id in [7, 7.0, True, None, b"valid", ["valid"], {"id": "valid"}]:
+            with self.subTest(id=repr(bad_id)):
+                result = workflow_inventory([{"id": bad_id, "name": "Safe"}])
+                self.assertEqual(result["status"], "DENY")
+                self.assertFalse(result["execution_authorized"])
+        self.assertEqual(workflow_inventory([{"id": "7", "name": "Safe"}])["status"], "OBSERVED_ONLY")
+
+    def test_mixed_workflow_id_types_fail_without_sort_exception(self):
+        result = workflow_inventory([{"id": "a", "name": "Alpha"}, {"id": 3, "name": "Three"}])
+        self.assertEqual(result["status"], "DENY")
+        self.assertEqual(result["workflows"], [])
+
+    def test_custom_workflow_str_is_never_coerced_or_called(self):
+        class UnexpectedId:
+            def __str__(self):
+                raise AssertionError("ID_COERCION_EXECUTED")
+        result = workflow_inventory([{"id": UnexpectedId(), "name": "Safe"}])
+        self.assertEqual(result["status"], "DENY")
+
+    def test_catalog_rejects_container_subclasses_before_access(self):
+        class EvilList(list):
+            def __iter__(self):
+                raise AssertionError("LIST_ITERATED")
+        class EvilDict(dict):
+            def get(self, key, default=None):
+                raise AssertionError("DICT_ACCESSED")
+        self.assertEqual(workflow_inventory(EvilList([{"id": "x", "name": "X"}]))["status"], "DENY")
+        self.assertEqual(workflow_inventory([EvilDict(id="x", name="X")])["status"], "DENY")
+        self.assertEqual(model_inventory(EvilList(["x"]))["status"], "DENY")
+
+    def test_model_and_workflow_string_subclasses_fail_closed(self):
+        class EvilStr(str):
+            def __hash__(self):
+                raise AssertionError("HASH_EXECUTED")
+            def __lt__(self, other):
+                raise AssertionError("SORT_EXECUTED")
+        self.assertEqual(model_inventory([EvilStr("safe")])["status"], "DENY")
+        self.assertEqual(workflow_inventory([{"id": EvilStr("safe"), "name": "Safe"}])["status"], "DENY")
+        self.assertEqual(workflow_inventory([{"id": "safe", "name": EvilStr("Safe")}])["status"], "DENY")
+
+
 class StubComfy(BaseHTTPRequestHandler):
     post_count=0
     get_paths=[]
