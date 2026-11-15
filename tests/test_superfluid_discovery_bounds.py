@@ -109,6 +109,44 @@ class DiscoveryBoundsTests(unittest.TestCase):
             self.assertFalse(observation["execution_authorized"])
             self.assertEqual(state["posts"], [])
 
+    def test_duplicate_checkpoint_choice_keys_rejected(self):
+        raw = (b'{"CheckpointLoaderSimple":{"input":{"required":{'
+               b'"ckpt_name":[["first.safetensors"]],'
+               b'"ckpt_name":[["last.safetensors"]]}}}}')
+        self.assert_rejected(raw)
+
+    def test_duplicate_root_and_unrelated_keys_rejected(self):
+        examples = [
+            b'{"CheckpointLoaderSimple":{"input":{"required":{"ckpt_name":[[]]}}},'
+            b'"CheckpointLoaderSimple":{"input":{"required":{"ckpt_name":[["last.safetensors"]]}}}}',
+            b'{"CheckpointLoaderSimple":{"input":{"required":{"ckpt_name":[[]]}}},'
+            b'"extra":{"count":1,"count":2}}',
+        ]
+        for raw in examples:
+            with self.subTest(raw=raw):
+                self.assert_rejected(raw)
+
+    def test_nonstandard_json_constants_rejected_even_outside_choices(self):
+        base = b'{"CheckpointLoaderSimple":{"input":{"required":{"ckpt_name":[[]]}}},"extra":'
+        for constant in (b'NaN', b'Infinity', b'-Infinity'):
+            with self.subTest(constant=constant):
+                self.assert_rejected(base + constant + b'}')
+
+    def test_duplicate_json_keys_rejected_in_gzip_response(self):
+        raw = (b'{"CheckpointLoaderSimple":{"input":{"required":{'
+               b'"ckpt_name":[[]],"ckpt_name":[["last.safetensors"]]}}}}')
+        packed = gzip.compress(raw)
+        self.assert_rejected(packed, {"Content-Encoding":"gzip",
+                                      "Content-Length":str(len(packed))})
+
+    def test_same_json_key_in_distinct_objects_is_allowed(self):
+        raw = (b'{"CheckpointLoaderSimple":{"input":{"required":{'
+               b'"ckpt_name":[[]]}}},"extra":{"required":{"ckpt_name":"ignored"}}}')
+        with stub_server(raw) as (url, state):
+            self.assertTrue(safe_check_comfyui_available(url))
+            self.assertEqual(ReadonlyComfyUIClient(url).available_models, [])
+            self.assertEqual(state["posts"], [])
+
     def test_clean_valid_small_response_preserves_discovery(self):
         with stub_server(make_payload()) as (url, state):
             self.assertTrue(safe_check_comfyui_available(url))
