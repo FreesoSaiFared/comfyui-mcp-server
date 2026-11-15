@@ -152,7 +152,7 @@ class HttpTests(unittest.TestCase):
             t=threading.Thread(target=http.serve_forever,daemon=True);t.start()
             try:
                 c=ReadonlyComfyUIClient(f"http://127.0.0.1:{http.server_address[1]}")
-                self.assertEqual(c.available_models,[])
+                self.assertIsNone(c.available_models)
                 self.assertEqual(Redirect.requests,["/object_info/CheckpointLoaderSimple"])
             finally:
                 http.shutdown();t.join(timeout=4)
