@@ -101,8 +101,11 @@ class ReadonlyWorkflowCatalog:
                 os.close(directory_fd)
                 directory_fd = next_fd
         except FileNotFoundError:
+            # Missing path is not an observed empty catalog. A concurrent
+            # deletion/rename can cause ENOENT anywhere in the pinned walk;
+            # report unavailable rather than issuing OBSERVED_ONLY for [].
             os.close(directory_fd)
-            return []
+            return None
         except BaseException as exc:
             os.close(directory_fd)
             if isinstance(exc, (KeyboardInterrupt, SystemExit)):
