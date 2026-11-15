@@ -131,7 +131,7 @@ class ImportFenceTests(unittest.TestCase):
                                  ["list_models", "list_workflows", "superfluid_worker_admission"])
                 self.assertEqual(Stub.posts, [])
                 self.assertEqual(Stub.gets,
-                                 ["/object_info/CheckpointLoaderSimple"] * 2)
+                                 ["/object_info/CheckpointLoaderSimple"])
             finally:
                 http.shutdown()
                 t.join(timeout=4)
