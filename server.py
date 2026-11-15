@@ -145,26 +145,28 @@ def wait_for_comfyui(base_url: str, max_retries: int = COMFYUI_MAX_RETRIES,
 # Print startup banner
 print_startup_banner()
 
-# Check ComfyUI availability before initializing clients
+# A read-only startup has exactly one bounded observation, reused for the
+# initial model inventory. No second GET, TOCTOU response swap, or unbounded
+# retry/backoff. Fail closed on an unavailable service. The explicit legacy
+# branch retains its historical retry and client initialization behavior.
 if SUPERFLUID_MODE == "readonly":
-    from superfluid_safe_comfy import safe_check_comfyui_available
-    check_comfyui_available = safe_check_comfyui_available
-
-if not check_comfyui_available(COMFYUI_URL):
-    if not wait_for_comfyui(COMFYUI_URL):
-        _console_print("\n" + "=" * 70)
-        _console_print("[X] ERROR: ComfyUI is not available after all retry attempts!")
-        _console_print("=" * 70)
-        _console_print(f"  Please ensure ComfyUI is running at: {COMFYUI_URL}")
-        _console_print("  Start ComfyUI first, then restart this server.")
-        _console_print("=" * 70 + "\n")
-        sys.exit(1)
-
-# Read-only client refuses queue/cancel and never follows redirect or environment proxy.
-if SUPERFLUID_MODE == "readonly":
-    from superfluid_safe_comfy import ReadonlyComfyUIClient
-    comfyui_client = ReadonlyComfyUIClient(COMFYUI_URL)
+    from superfluid_safe_comfy import ReadonlyComfyUIClient, _read_discovery_payload
+    startup_payload = _read_discovery_payload(COMFYUI_URL)
+    if not isinstance(startup_payload, dict) or not isinstance(startup_payload.get("CheckpointLoaderSimple"), dict):
+        logger.error("READONLY_DISCOVERY_UNAVAILABLE: startup observation not validated")
+        raise SystemExit(1)
+    comfyui_client = ReadonlyComfyUIClient.from_observed_payload(COMFYUI_URL, startup_payload)
+    del startup_payload
 else:
+    if not check_comfyui_available(COMFYUI_URL):
+        if not wait_for_comfyui(COMFYUI_URL):
+            _console_print("\n" + "=" * 70)
+            _console_print("[X] ERROR: ComfyUI is not available after all retry attempts!")
+            _console_print("=" * 70)
+            _console_print(f"  Please ensure ComfyUI is running at: {COMFYUI_URL}")
+            _console_print("  Start ComfyUI first, then restart this server.")
+            _console_print("=" * 70 + "\n")
+            sys.exit(1)
     comfyui_client = ComfyUIClient(COMFYUI_URL)
 if SUPERFLUID_MODE == "readonly":
     from superfluid_readonly import ReadonlyWorkflowCatalog
